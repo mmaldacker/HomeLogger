@@ -14,4 +14,4 @@ add_executable(home_logger
     main.cpp
 )
 
-target_link_libraries(home_logger PRIVATE crow)
+target_link_libraries(home_logger PRIVATE Crow::Crow)
