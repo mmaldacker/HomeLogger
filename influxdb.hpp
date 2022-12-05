@@ -13,12 +13,6 @@
 #include <sstream>
 #include <cstring>
 #include <cstdio>
-#include <cstdlib>
-
-// for testing
-#include <iostream>
-
-#define DEFAULT_PRECISION 5
 
 #ifdef _WIN32
     #define NOMINMAX
@@ -36,7 +30,6 @@
     #include <sys/socket.h>
     #include <sys/uio.h>
     #include <netinet/in.h>
-    #include <netdb.h>
     #include <arpa/inet.h>
     #define closesocket close
 #endif
@@ -45,53 +38,12 @@ namespace influxdb_cpp {
     struct server_info {
         std::string host_;
         int port_;
-        std::string org_;
-        std::string bkt_;
-        std::string tkn_;
-        struct addrinfo hints_, *res_=NULL;
-        server_info(const std::string& host, int port, const std::string& org, const std::string& token, const std::string& bucket = "") {
-            port_ = port;
-            org_  = org;
-            tkn_  = token;
-            bkt_  = bucket;
-
-            // please reference the IBM documentation for IPv4/IPv6 with questions
-            // https://www.ibm.com/docs/en/i/7.2?topic=clients-example-ipv4-ipv6-client
-            int resp = 0;
-
-            struct in6_addr serveraddr;
-            memset(&hints_, 0x00, sizeof(hints_));
-            hints_.ai_flags    = AI_NUMERICSERV;
-            hints_.ai_family   = AF_UNSPEC;
-            hints_.ai_socktype = SOCK_STREAM;
-
-            // check to see if the address is a valid IPv4 address
-            resp = inet_pton(AF_INET, host.c_str(), &serveraddr);
-            if (resp == 1){
-                hints_.ai_family = AF_INET; // IPv4
-                hints_.ai_flags |= AI_NUMERICHOST;
-            
-            // not a valid IPv4 -> check to see if address is a valid IPv6 address
-            } else {
-                resp = inet_pton(AF_INET6, host.c_str(), &serveraddr);
-                if (resp == 1) {
-                    hints_.ai_family = AF_INET6;  // IPv6
-                    hints_.ai_flags |= AI_NUMERICHOST;
-
-                }
-            }
-
-            resp = getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints_, &res_);
-            if (resp != 0) {
-                std::cerr << "Host not found --> " << gai_strerror(resp) << std::endl;
-#ifdef EAI_SYSTEM
-                if (resp == EAI_SYSTEM)
-                    std::cerr << "getaddrinfo() failed" << std::endl;
-#endif
-                exit(1);
-            }
-
-        }
+        std::string db_;
+        std::string usr_;
+        std::string pwd_;
+        std::string precision_;
+        server_info(const std::string& host, int port, const std::string& db = "", const std::string& usr = "", const std::string& pwd = "", const std::string& precision="ms")
+            : host_(host), port_(port), db_(db), usr_(usr), pwd_(pwd), precision_(precision) {}
     };
     namespace detail {
         struct meas_caller;
@@ -99,21 +51,21 @@ namespace influxdb_cpp {
         struct field_caller;
         struct ts_caller;
         struct inner {
-            static int http_request(const char*, const char*, const std::string&, const std::string&, const server_info&, std::string*);
+            static int http_request(const char*, const char*, const std::string&, const std::string&, const server_info&, std::string*, unsigned timeout_sec = 0);
             static inline unsigned char to_hex(unsigned char x) { return  x > 9 ? x + 55 : x + 48; }
             static void url_encode(std::string& out, const std::string& src);
         };
     }
 
-    inline int flux_query(std::string& resp, const std::string& query, const server_info& si) {
-
-        // query JSON body
-        std::stringstream body;
-        body << "{\"query\": \"";
-        body << query;
-        body << "\", \"type\": \"flux\" }";
-
-        return detail::inner::http_request("POST", "query", "", body.str(), si, &resp);
+    inline int query(std::string& resp, const std::string& query, const server_info& si, unsigned timeout_sec = 0) {
+        std::string qs("&q=");
+        detail::inner::url_encode(qs, query);
+        return detail::inner::http_request("GET", "query", qs, "", si, &resp, timeout_sec);
+    }
+    inline int create_db(std::string& resp, const std::string& db_name, const server_info& si, unsigned timeout_sec = 0) {
+        std::string qs("&q=create+database+");
+        detail::inner::url_encode(qs, db_name);
+        return detail::inner::http_request("POST", "query", qs, "", si, &resp, timeout_sec);
     }
 
     struct builder {
@@ -125,54 +77,67 @@ namespace influxdb_cpp {
     protected:
         detail::tag_caller& _m(const std::string& m) {
             _escape(m, ", ");
-            return (detail::tag_caller&)*this;
+            return reinterpret_cast<detail::tag_caller&>(*this);
         }
         detail::tag_caller& _t(const std::string& k, const std::string& v) {
             lines_ << ',';
             _escape(k, ",= ");
             lines_ << '=';
             _escape(v, ",= ");
-            return (detail::tag_caller&)*this;
+            return reinterpret_cast<detail::tag_caller&>(*this);
         }
         detail::field_caller& _f_s(char delim, const std::string& k, const std::string& v) {
-            //std::cout << "KV: " << k << " " << v << std::endl;
             lines_ << delim;
-            lines_ << std::fixed;
             _escape(k, ",= ");
             lines_ << "=\"";
             _escape(v, "\"");
             lines_ << '\"';
-            return (detail::field_caller&)*this;
+            return reinterpret_cast<detail::field_caller&>(*this);
         }
         detail::field_caller& _f_i(char delim, const std::string& k, long long v) {
             lines_ << delim;
-            lines_ << std::fixed;
             _escape(k, ",= ");
             lines_ << '=';
             lines_ << v << 'i';
-            return (detail::field_caller&)*this;
+            return reinterpret_cast<detail::field_caller&>(*this);
         }
         detail::field_caller& _f_f(char delim, const std::string& k, double v, int prec) {
             lines_ << delim;
             _escape(k, ",= ");
-            lines_ << std::fixed;
             lines_.precision(prec);
+            lines_.setf(std::ios::fixed);
             lines_ << '=' << v;
-            return (detail::field_caller&)*this;
+            return reinterpret_cast<detail::field_caller&>(*this);
         }
         detail::field_caller& _f_b(char delim, const std::string& k, bool v) {
             lines_ << delim;
             _escape(k, ",= ");
-            lines_ << std::fixed;
             lines_ << '=' << (v ? 't' : 'f');
-            return (detail::field_caller&)*this;
+            return reinterpret_cast<detail::field_caller&>(*this);
         }
         detail::ts_caller& _ts(long long ts) {
             lines_ << ' ' << ts;
-            return (detail::ts_caller&)*this;
+            return reinterpret_cast<detail::ts_caller&>(*this);
         }
-        int _post_http(const server_info& si, std::string* resp) {
-            return detail::inner::http_request("POST", "write", "", lines_.str(), si, resp);
+        int _post_http(const server_info& si, std::string* resp, unsigned timeout_sec = 0) {
+            return detail::inner::http_request("POST", "write", "", lines_.str(), si, resp, timeout_sec);
+        }
+        int _send_udp(const std::string& host, int port) {
+            int sock, ret = 0;
+            struct sockaddr_in addr;
+
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(port);
+            if((addr.sin_addr.s_addr = inet_addr(host.c_str())) == INADDR_NONE) return -1;
+
+            if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) return -2;
+
+            lines_ << '\n';
+            if(sendto(sock, &lines_.str()[0], lines_.str().length(), 0, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)), static_cast<int>(lines_.str().length()))
+                ret = -3;
+
+            closesocket(sock);
+            return ret;
         }
         void _escape(const std::string& src, const char* escape_seq) {
             size_t pos = 0, start = 0;
@@ -196,13 +161,15 @@ namespace influxdb_cpp {
             detail::field_caller& field(const std::string& k, int v)                  { return _f_i(' ', k, v); }
             detail::field_caller& field(const std::string& k, long v)                 { return _f_i(' ', k, v); }
             detail::field_caller& field(const std::string& k, long long v)            { return _f_i(' ', k, v); }
-            detail::field_caller& field(const std::string& k, double v, int prec = DEFAULT_PRECISION) { return _f_f(' ', k, v, prec); }
+            detail::field_caller& field(const std::string& k, double v, int prec = 2) { return _f_f(' ', k, v, prec); }
         private:
             detail::tag_caller& meas(const std::string& m);
         };
         struct ts_caller : public builder {
             detail::tag_caller& meas(const std::string& m)                            { lines_ << '\n'; return _m(m); }
-            int post_http(const server_info& si, std::string* resp = NULL)            { return _post_http(si, resp); }
+            int post_http(const server_info& si, std::string* resp = NULL,
+                                          unsigned timeout_sec = 0)            { return _post_http(si, resp, timeout_sec); }
+            int send_udp(const std::string& host, int port)                           { return _send_udp(host, port); }
         };
         struct field_caller : public ts_caller {
             detail::field_caller& field(const std::string& k, const std::string& v)   { return _f_s(',', k, v); }
@@ -222,75 +189,63 @@ namespace influxdb_cpp {
                     out += "+";
                 else {
                     out += '%';
-                    out += to_hex((unsigned char)src[pos] >> 4);
-                    out += to_hex((unsigned char)src[pos] & 0xF);
+                    out += to_hex(static_cast<unsigned char>(src[pos]) >> 4);
+                    out += to_hex(static_cast<unsigned char>(src[pos]) & 0xF);
                 }
                 start = ++pos;
             }
             out.append(src.c_str() + start, src.length() - start);
         }
         inline int inner::http_request(const char* method, const char* uri,
-            const std::string& querystring, const std::string& body, const server_info& si, std::string* resp) {
+            const std::string& querystring, const std::string& body, const server_info& si, std::string* resp, unsigned timeout_sec) {
             std::string header;
             struct iovec iv[2];
+            struct sockaddr_in addr;
             int sock, ret_code = 0, content_length = 0, len = 0;
             char ch;
             unsigned char chunked = 0;
 
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(si.port_);
+            if((addr.sin_addr.s_addr = inet_addr(si.host_.c_str())) == INADDR_NONE) return -1;
 
-            // open the socket
-            sock = socket(si.res_->ai_family, si.res_->ai_socktype, si.res_->ai_protocol);
-            if (sock < 0) {
-                std::cerr << "socket() failed" << std::endl;
+            if((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) return -2;
+
+            struct timeval timeout;
+            timeout.tv_sec = static_cast<long>(timeout_sec);
+            timeout.tv_usec = 0;
+            if(setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char*> (&timeout), sizeof(timeout)) < 0) return -2;
+
+            if(connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
                 closesocket(sock);
-                return(1);
+                return -3;
             }
-
-
-
-            // connect to the server
-            ret_code = connect(sock, si.res_->ai_addr, si.res_->ai_addrlen);
-            if (ret_code < 0)
-            {
-                std::cerr << "connect() failed" << std::endl;
-                closesocket(sock);
-                exit(1);
-            }
-
-
 
             header.resize(len = 0x100);
 
             for(;;) {
                 iv[0].iov_len = snprintf(&header[0], len,
-                    "%s /api/v2/%s?org=%s&bucket=%s%s HTTP/1.1\r\nHost: %s\r\nAuthorization:Token %s\r\nContent-Length: %d\r\n\r\n",
-                    method, uri, si.org_.c_str(), si.bkt_.c_str(),
-                    querystring.c_str(), si.host_.c_str(), si.tkn_.c_str(), (int)body.length());
-
-                /*
-                    std::cout << printf(&header[0], len,
-                    "%s /api/v2/%s?org=%s&bucket=%s%s HTTP/1.1\r\nHost: %s\r\nAuthorization:Token %s\r\nContent-Length: %d\r\n\r\n",
-                    method, uri, si.org_.c_str(), si.bkt_.c_str(),
-                    querystring.c_str(), si.host_.c_str(), si.tkn_.c_str(), (int)body.length()) << std::endl;
-                    */
-                if((int)iv[0].iov_len >= len)
+                    "%s /%s?db=%s&u=%s&p=%s&epoch=%s%s HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\n\r\n",
+                    method, uri, si.db_.c_str(), si.usr_.c_str(), si.pwd_.c_str(), si.precision_.c_str(),
+                    querystring.c_str(), si.host_.c_str(), static_cast<int>(body.length()));
+                if(static_cast<int>(iv[0].iov_len) >= len)
                     header.resize(len *= 2);
                 else
                     break;
             }
             iv[0].iov_base = &header[0];
-            iv[1].iov_base = (void*)&body[0];
+            iv[1].iov_base = const_cast<char*>(&body[0]);
             iv[1].iov_len = body.length();
 
-            if(writev(sock, iv, 2) < (int)(iv[0].iov_len + iv[1].iov_len)) {
+            if(writev(sock, iv, 2) < static_cast<int>(iv[0].iov_len + iv[1].iov_len)) {
                 ret_code = -6;
                 goto END;
             }
 
             iv[0].iov_len = len;
 
-#define _NO_MORE() (len >= (int)iv[0].iov_len && \
-    (iv[0].iov_len = recv(sock, &header[0], header.length(), len = 0)) == size_t(-1))
+#define _NO_MORE() (len >= static_cast<int>(iv[0].iov_len) && \
+    (iv[0].iov_len = recv(sock, &header[0], header.length(), len = 0)) == static_cast<size_t>(-1))
 #define _GET_NEXT_CHAR() (ch = _NO_MORE() ? 0 : header[len++])
 #define _LOOP_NEXT(statement) for(;;) { if(!(_GET_NEXT_CHAR())) { ret_code = -7; goto END; } statement }
 #define _UNTIL(c) _LOOP_NEXT( if(ch == c) break; )
@@ -327,7 +282,7 @@ namespace influxdb_cpp {
                                 }
                             case 0:
                                 while(content_length > 0 && !_NO_MORE()) {
-                                    content_length -= (iv[1].iov_len = std::min(content_length, (int)iv[0].iov_len - len));
+                                    content_length -= (iv[1].iov_len = std::min(content_length, static_cast<int>(iv[0].iov_len) - len));
                                     if(resp) resp->append(&header[len], iv[1].iov_len);
                                     len += iv[1].iov_len;
                                 }

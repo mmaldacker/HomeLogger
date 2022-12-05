@@ -2,10 +2,7 @@
 #include "influxdb.hpp"
 #include "sqlite_orm/sqlite_orm.h"
 
-const std::string influxdb_token =
-    "****";
-const std::string bucket = "sensors";
-const std::string org = "home";
+const std::string db = "sensors";
 
 struct field_mapping
 {
@@ -27,7 +24,7 @@ int main()
 #endif
 
   crow::SimpleApp app;
-  influxdb_cpp::server_info server_info("127.0.0.1", 8086, org, influxdb_token, bucket);
+  influxdb_cpp::server_info server_info("127.0.0.1", 8086, db);
 
   auto storage = sqlite_orm::make_storage(
       "home_logger.db",
@@ -97,13 +94,12 @@ int main()
       [=](const std::string& sensor_name)
       {
         std::string resp;
-        std::string query(
-            R"(from(bucket: \")" + bucket +
-            R"(\") |> range(start: -7d) |> filter(fn: (r)=>r[\"_measurement\"] == \")" +
-            sensor_name + R"(\"))");
+        std::string query("select * from " + sensor_name);
+
+        CROW_LOG_INFO << "Query " << query;
 
         // TODO passed by reference, is this thread safe?
-        influxdb_cpp::flux_query(resp, query, server_info);
+        influxdb_cpp::query(resp, query, server_info);
         return resp;
       });
 
