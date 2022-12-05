@@ -65,7 +65,7 @@ int main()
               std::time_t unix_timestamp = mktime(&t);
               */
               std::time_t unix_timestamp = std::time(nullptr);
-              std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000;
+              std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000ull;
               double d_value = std::stod(value);
 
               CROW_LOG_INFO << "Adding with timestamp: " << nano_unix_timestamp;
