@@ -68,6 +68,8 @@ int main()
               std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000;
               double d_value = std::stod(value);
 
+              CROW_LOG_INFO << "Adding with timestamp: " << nano_unix_timestamp;
+
               // TODO passed by reference, is this thread safe?
               using namespace sqlite_orm;
               auto results = storage.get_all<field_mapping>(
