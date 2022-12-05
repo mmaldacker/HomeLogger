@@ -33,6 +33,8 @@ int main()
                              sqlite_orm::make_column("from_field", &field_mapping::from_field),
                              sqlite_orm::make_column("to_field", &field_mapping::to_field)));
 
+  storage.sync_schema();
+
   CROW_ROUTE(app, "/about")
   ([]() { return "About Home Logger."; });
 
