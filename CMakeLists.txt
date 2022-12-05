@@ -17,8 +17,9 @@ add_library(SQLite3 STATIC
 
 add_executable(home_logger
     main.cpp
-    sqlite_wrapper.cpp
-    sqlite_wrapper.h
-    influxdb.hpp)
+    influxdb.hpp
+    sqlite_orm/sqlite_orm.h
+        )
 
 target_link_libraries(home_logger PRIVATE Crow::Crow SQLite3)
+target_include_directories(home_logger PRIVATE .)

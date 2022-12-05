@@ -1,11 +1,18 @@
 #include "crow.h"
 #include "influxdb.hpp"
-#include "sqlite_wrapper.h"
+#include "sqlite_orm/sqlite_orm.h"
 
 const std::string influxdb_token =
     "****";
 const std::string bucket = "sensors";
 const std::string org = "home";
+
+struct field_mapping
+{
+  std::string measurement;
+  std::string from_field;
+  std::string to_field;
+};
 
 int main()
 {
@@ -21,25 +28,32 @@ int main()
 
   crow::SimpleApp app;
   influxdb_cpp::server_info server_info("127.0.0.1", 8086, org, influxdb_token, bucket);
-  auto sqlite = std::make_shared<sqlite_wrapper>("home_logger.db");
+
+  auto storage = sqlite_orm::make_storage(
+      "home_logger.db",
+      sqlite_orm::make_table("field_mapping",
+                             sqlite_orm::make_column("measurement", &field_mapping::measurement),
+                             sqlite_orm::make_column("from_field", &field_mapping::from_field),
+                             sqlite_orm::make_column("to_field", &field_mapping::to_field)));
 
   CROW_ROUTE(app, "/about")
   ([]() { return "About Home Logger."; });
 
   CROW_ROUTE(app, "/sensors/<string>/add")
       .methods("POST"_method)(
-          [=](const crow::request& req, crow::response& res, const std::string& measurement)
+          [&](const crow::request& req, crow::response& res, const std::string& measurement)
           {
             auto body = crow::json::load(req.body);
 
-            const auto& name = body["sensor_name"];
-            CROW_LOG_INFO << "Adding sensor data with name: " << name;
+            // auto measurement = (std::string)body["measurement"];
+            CROW_LOG_INFO << "Adding sensor data with name: " << measurement;
             for (const auto& data_point : body["data"])
             {
-              auto timestamp = data_point["timestamp"];
-              auto value = data_point["value"];
-              CROW_LOG_INFO << "Data point: " << value << " at " << timestamp;
-
+              auto name = (std::string)data_point["name"];
+              // auto timestamp = data_point["timestamp"];
+              auto value = (std::string)data_point["value"];
+              CROW_LOG_INFO << "Data point: name " << name << " at " << value;
+              /*
               std::tm t{};
               std::istringstream ss((std::string)timestamp);
 
@@ -50,12 +64,26 @@ int main()
               }
 
               std::time_t unix_timestamp = mktime(&t);
+              */
+              std::time_t unix_timestamp = std::time(nullptr);
               std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000;
-              double d_value = std::stod((std::string)value);
+              double d_value = std::stod(value);
 
+              // TODO passed by reference, is this thread safe?
+              using namespace sqlite_orm;
+              auto results = storage.get_all<field_mapping>(
+                  where(c(&field_mapping::measurement) == measurement &&
+                        c(&field_mapping::from_field) == name));
+
+              if (!results.empty())
+              {
+                name = results[0].to_field;
+              }
+
+              // TODO passed by reference, is this thread safe?
               auto r = influxdb_cpp::builder()
                            .meas(measurement)
-                           .field((std::string)name, d_value)
+                           .field(name, d_value)
                            .timestamp(nano_unix_timestamp)
                            .post_http(server_info);
               CROW_LOG_INFO << "InfluxDB result: " << r;
@@ -74,31 +102,48 @@ int main()
             R"(\") |> range(start: -7d) |> filter(fn: (r)=>r[\"_measurement\"] == \")" +
             sensor_name + R"(\"))");
 
+        // TODO passed by reference, is this thread safe?
         influxdb_cpp::flux_query(resp, query, server_info);
         return resp;
       });
 
   CROW_ROUTE(app, "/sensors/<string>/add_mapping")
       .methods("POST"_method)(
-          [=](const crow::request& req, crow::response& res, const std::string& measurement)
+          [&](const crow::request& req, crow::response& res, const std::string& measurement)
           {
-            std::string from = req.url_params.get("from");
-            std::string to = req.url_params.get("to");
+            auto body = crow::json::load(req.body);
+            field_mapping mapping;
+            mapping.measurement = measurement;
+            mapping.from_field = (std::string)body["from_field"];
+            mapping.to_field = (std::string)body["to_field"];
 
-            sqlite->exec("insert into field_mapping values (\"" + from + "\", \"" + to + "\");",
-                         [](int col_index, char* col_value, char* col_name) {});
+            // TODO passed by reference, is this thread safe?
+            storage.insert(mapping);
+
+            res.end();
           });
 
-  CROW_ROUTE(app, "/sensors/<string>/list_mapping")
+  CROW_ROUTE(app, "/sensors/<string>/list_mappings")
   (
-      [=](const crow::request& req, crow::response& res, const std::string& measurement)
+      [&](const crow::request& req, crow::response& res, const std::string& measurement)
       {
-        std::string from = req.url_params.get("from");
-        std::string to = req.url_params.get("to");
+        // TODO passed by reference, is this thread safe?
+        using namespace sqlite_orm;
+        auto results =
+            storage.get_all<field_mapping>(where(c(&field_mapping::measurement) == measurement));
 
-        sqlite->exec("select from_name, to_name from field_mapping;",
-                     [](int col_index, char* col_value, char* col_name) {});
+        crow::json::wvalue::list results_json;
+        for (auto& result : results)
+        {
+          crow::json::wvalue result_json;
+          result_json["from_field"] = result.from_field;
+          result_json["to_field"] = result.to_field;
+          results_json.push_back(result_json);
+        }
+
+        crow::json::wvalue result = {{"measurement", measurement}, {"mappings", results_json}};
+        res.end(result.dump());
       });
 
-  app.port(18080).multithreaded().run();
+  app.port(18080).run();
 }
