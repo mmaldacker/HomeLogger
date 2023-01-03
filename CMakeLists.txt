@@ -15,6 +15,10 @@ add_library(SQLite3 STATIC
         sqlite3.h
         sqlite3.c)
 
+if (UNIX)
+    target_link_libraries(SQLite3 PRIVATE ${CMAKE_DL_LIBS})
+endif (UNIX)
+
 add_executable(home_logger
     main.cpp
     influxdb.hpp
