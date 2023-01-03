@@ -42,52 +42,59 @@ int main()
       .methods("POST"_method)(
           [&](const crow::request& req, crow::response& res, const std::string& measurement)
           {
+            if (req.body.empty())
+            {
+              res.end();
+              return;
+            }
+
             auto body = crow::json::load(req.body);
 
             // auto measurement = (std::string)body["measurement"];
             CROW_LOG_INFO << "Adding sensor data with name: " << measurement;
-            for (const auto& data_point : body["data"])
+            for (const auto& data_points : body["data"])
             {
-              auto name = (std::string)data_point["name"];
-              // auto timestamp = data_point["timestamp"];
-              auto value = (std::string)data_point["value"];
-              CROW_LOG_INFO << "Data point: name " << name << " at " << value;
-              /*
-              std::tm t{};
-              std::istringstream ss((std::string)timestamp);
-
-              ss >> std::get_time(&t, "%Y-%m-%dT%H:%M:%S");
-              if (ss.fail())
+              auto name = (std::string)data_points.key();
+              for (const auto& series : data_points)
               {
-                throw std::runtime_error{"failed to parse time string"};
+                auto timestamp = series["timestamp"];
+                auto value = (std::string)series["value"];
+                CROW_LOG_INFO << "Data point: name " << name << " at " << value;
+
+                std::tm t{};
+                std::istringstream ss((std::string)timestamp);
+
+                ss >> std::get_time(&t, "%Y%m%dT%H:%M:%S");
+                if (ss.fail())
+                {
+                  throw std::runtime_error{"failed to parse time string"};
+                }
+
+                std::time_t unix_timestamp = mktime(&t);
+                std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000ull;
+                double d_value = std::stod(value);
+
+                CROW_LOG_INFO << "Adding with timestamp: " << nano_unix_timestamp;
+
+                // TODO passed by reference, is this thread safe?
+                using namespace sqlite_orm;
+                auto results = storage.get_all<field_mapping>(
+                    where(c(&field_mapping::measurement) == measurement &&
+                          c(&field_mapping::from_field) == name));
+
+                if (!results.empty())
+                {
+                  name = results[0].to_field;
+                }
+
+                // TODO passed by reference, is this thread safe?
+                auto r = influxdb_cpp::builder()
+                             .meas(measurement)
+                             .field(name, d_value)
+                             .timestamp(nano_unix_timestamp)
+                             .post_http(server_info);
+                CROW_LOG_INFO << "InfluxDB result: " << r;
               }
-
-              std::time_t unix_timestamp = mktime(&t);
-              */
-              std::time_t unix_timestamp = std::time(nullptr);
-              std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000ull;
-              double d_value = std::stod(value);
-
-              CROW_LOG_INFO << "Adding with timestamp: " << nano_unix_timestamp;
-
-              // TODO passed by reference, is this thread safe?
-              using namespace sqlite_orm;
-              auto results = storage.get_all<field_mapping>(
-                  where(c(&field_mapping::measurement) == measurement &&
-                        c(&field_mapping::from_field) == name));
-
-              if (!results.empty())
-              {
-                name = results[0].to_field;
-              }
-
-              // TODO passed by reference, is this thread safe?
-              auto r = influxdb_cpp::builder()
-                           .meas(measurement)
-                           .field(name, d_value)
-                           .timestamp(nano_unix_timestamp)
-                           .post_http(server_info);
-              CROW_LOG_INFO << "InfluxDB result: " << r;
             }
 
             res.end();
