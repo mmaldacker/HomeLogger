@@ -114,6 +114,20 @@ int main()
         return resp;
       });
 
+  CROW_ROUTE(app, "/sensors/<string>/latest")
+  (
+      [=](const std::string& sensor_name)
+      {
+        std::string resp;
+        std::string query("select * from " + sensor_name + " group by * order by asc limit 1");
+
+        CROW_LOG_INFO << "Query " << query;
+
+        // TODO passed by reference, is this thread safe?
+        influxdb_cpp::query(resp, query, server_info);
+        return resp;
+      });
+
   CROW_ROUTE(app, "/sensors/<string>/add_mapping")
       .methods("POST"_method)(
           [&](const crow::request& req, crow::response& res, const std::string& measurement)
