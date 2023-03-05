@@ -7,7 +7,7 @@ include(FetchContent)
 
 FetchContent_Declare(crow
         GIT_REPOSITORY https://github.com/CrowCpp/Crow.git
-        GIT_TAG        v1.0+1)
+        GIT_TAG        v1.0+5)
 FetchContent_MakeAvailable(crow)
 
 add_library(SQLite3 STATIC
