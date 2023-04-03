@@ -100,19 +100,34 @@ int main()
             res.end();
           });
 
-  CROW_ROUTE(app, "/sensors/<string>/list")
+  CROW_ROUTE(app, "/sensors/<string>/list/<string>")
   (
-      [=](const std::string& sensor_name)
+      [=](const std::string& sensor_name, const std::string& measurement_name)
       {
         std::string resp;
-        std::string query("select * from " + sensor_name);
+        std::string query("select mean(" + measurement_name + ") from " + sensor_name + " where time >= now() - 24h group by time(1h)" );
 
         CROW_LOG_INFO << "Query " << query;
 
         // TODO passed by reference, is this thread safe?
         influxdb_cpp::query(resp, query, server_info);
 
-        return resp;
+        auto body = crow::json::load(resp);
+        auto& latest_series = body["results"][0]["series"][0];
+
+        auto& values = latest_series["values"];
+
+        crow::json::wvalue::list results_json;
+        for (auto& value: values)
+        {
+          crow::json::wvalue result_json;
+          result_json["timestamp"] = value[0];
+          result_json["value"] = value[1];
+          results_json.push_back(result_json);
+        }
+
+        crow::json::wvalue result = results_json;
+        return result.dump();
       });
 
   CROW_ROUTE(app, "/sensors/<string>/latest")
