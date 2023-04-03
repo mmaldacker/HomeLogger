@@ -11,6 +11,32 @@ struct field_mapping
   std::string to_field;
 };
 
+std::string get_time_query(const crow::request& req)
+{
+  std::string daily = " where time >= now() - 24h group by time(1h)";
+  std::string monthly = " where time >= now() - 31d group by time(1d)";
+
+  auto interval = req.url_params.get("interval"); // daily / monthly
+  if (interval == nullptr || interval == std::string_view("daily"))
+  {
+    return daily;
+  }
+
+  return monthly;
+}
+
+std::string get_agg_query(const crow::request& req)
+{
+  auto type = req.url_params.get("type"); // mean / max / min
+  if (type == nullptr || type == std::string_view("mean"))
+  {
+    return "mean";
+  }
+
+  return "max";
+}
+
+
 int main()
 {
 #ifdef _WIN32
@@ -102,14 +128,16 @@ int main()
 
   CROW_ROUTE(app, "/sensors/<string>/list/<string>")
   (
-      [=](const std::string& sensor_name, const std::string& measurement_name)
+      [=](const crow::request& req, const std::string& sensor_name, const std::string& measurement_name)
       {
-        std::string resp;
-        std::string query("select mean(" + measurement_name + ") from " + sensor_name + " where time >= now() - 24h group by time(1h)" );
+        auto time_query = get_time_query(req);
+        auto agg_query = get_agg_query(req);
 
+        std::string query = "select " + agg_query + "(" + measurement_name + ") from " + sensor_name + time_query;
         CROW_LOG_INFO << "Query " << query;
 
         // TODO passed by reference, is this thread safe?
+        std::string resp;
         influxdb_cpp::query(resp, query, server_info);
 
         auto body = crow::json::load(resp);
