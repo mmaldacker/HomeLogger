@@ -90,7 +90,7 @@ int main()
 
                 std::istringstream in{std::move(timestamp)};
                 std::chrono::sys_seconds tp;
-                in >> parse("%Y%m%dT%H:%M:%S", tp);
+                in >> date::parse("%Y%m%dT%H:%M:%S", tp);
 
                 std::time_t unix_timestamp = tp.time_since_epoch().count();
                 std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000ull;
