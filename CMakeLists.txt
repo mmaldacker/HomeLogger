@@ -19,11 +19,17 @@ if (UNIX)
     target_link_libraries(SQLite3 PRIVATE ${CMAKE_DL_LIBS})
 endif (UNIX)
 
+
+FetchContent_Declare(date
+        GIT_REPOSITORY https://github.com/HowardHinnant/date.git
+        GIT_TAG        master)
+FetchContent_MakeAvailable(date)
+
 add_executable(home_logger
     main.cpp
     influxdb.hpp
     sqlite_orm/sqlite_orm.h
         )
 
-target_link_libraries(home_logger PRIVATE Crow::Crow SQLite3)
+target_link_libraries(home_logger PRIVATE Crow::Crow SQLite3 date::date)
 target_include_directories(home_logger PRIVATE .)

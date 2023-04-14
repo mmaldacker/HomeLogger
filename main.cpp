@@ -1,6 +1,7 @@
 #include "crow.h"
 #include "influxdb.hpp"
 #include "sqlite_orm/sqlite_orm.h"
+#include "date/date.h"
 
 const std::string db = "sensors";
 
@@ -83,20 +84,15 @@ int main()
               auto name = (std::string)data_points.key();
               for (const auto& series : data_points)
               {
-                auto timestamp = series["timestamp"];
+                auto timestamp = (std::string)series["timestamp"];
                 auto value = (std::string)series["value"];
                 CROW_LOG_INFO << "Data point: name " << name << " at " << value;
 
-                std::tm t{};
-                std::istringstream ss((std::string)timestamp);
+                std::istringstream in{std::move(timestamp)};
+                std::chrono::sys_seconds tp;
+                in >> parse("%Y%m%dT%H:%M:%S", tp);
 
-                ss >> std::get_time(&t, "%Y%m%dT%H:%M:%S");
-                if (ss.fail())
-                {
-                  throw std::runtime_error{"failed to parse time string"};
-                }
-
-                std::time_t unix_timestamp = mktime(&t);
+                std::time_t unix_timestamp = tp.time_since_epoch().count();
                 std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000ull;
                 double d_value = std::stod(value);
 
