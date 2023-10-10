@@ -16,11 +16,17 @@ std::string get_time_query(const crow::request& req)
 {
   std::string daily = " where time >= now() - 24h group by time(1h)";
   std::string monthly = " where time >= now() - 31d group by time(1d)";
+  std::string weekly = " where time >= now() - 7d group by time(1d)";
 
   auto interval = req.url_params.get("interval"); // daily / monthly
   if (interval == nullptr || interval == std::string_view("daily"))
   {
     return daily;
+  }
+
+  if (interval == std::string_view("weekly"))
+  {
+    return weekly;
   }
 
   return monthly;
@@ -92,7 +98,7 @@ int main()
                 std::chrono::sys_seconds tp;
                 in >> date::parse("%Y%m%dT%H:%M:%S", tp);
 
-                std::time_t unix_timestamp = tp.time_since_epoch().count();
+                auto unix_timestamp = tp.time_since_epoch().count();
                 std::uint64_t nano_unix_timestamp = unix_timestamp * 1000'000'000ull;
                 double d_value = std::stod(value);
 
